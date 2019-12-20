@@ -1,0 +1,282 @@
+import matplotlib
+
+matplotlib.use("Agg")
+import tensorflow as tf
+import faceno
+import cv2
+import numpy as np
+# import matplotlib as plt
+import matplotlib
+
+matplotlib.use("Agg")
+from keras.preprocessing import image
+import tensorflow as tf_face
+from matplotlib.font_manager import FontProperties
+import param
+import dlib
+import time
+import self
+
+
+
+
+# -------------------------------------------
+# 利用dlib 标注特征点
+
+predictor = dlib.shape_predictor("e:/2 Python/3 ZhangMS/datas/shape_predictor_68_face_landmarks.dat")
+POINTS_NUM_LANDMARK = 68
+detector = dlib.get_frontal_face_detector()
+# opencv initialization
+import os
+
+# -------------------
+'''sess = tf.Session(config=tf.ConfigProto(
+    allow_soft_placement = True,log_device_placement = True))
+sess.run(tf.initialize_all_variables())'''
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+'''init_op = tf.initialize_all_variables()
+sess = tf.InteractiveSession()
+sess.run(init_op)'''
+
+font = FontProperties(fname=r"C:\Windows\Fonts\simhei.ttf", size=14)  # 调用字体
+face_cascade = cv2.CascadeClassifier('e:\\2 Python\\3 ZhangMS\\datas\\xml\\haarcascade_frontalface_default.xml')
+
+# -----------------------------
+
+# face expression recognizer initialization
+from keras.models import model_from_json
+
+model = model_from_json(open("e:/2 Python/3 ZhangMS/face/tempModel1.json", "r").read())
+model.load_weights('e:/2 Python/3 ZhangMS/face/faceExpression1.h5')  # load weight
+# ------------------------------------------
+
+input_filepath='e:/2 Python/3 ZhangMS/photo/huida.mp4'
+cap = cv2.VideoCapture(input_filepath)  # 读视频
+#cap = cv2.VideoCapture(0) #读视频
+w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+h = int(cap.get(4))
+faps = int(cap.get(5))
+fourcc = cv2.VideoWriter_fourcc('D','I','V','X')
+out = cv2.VideoWriter(input_filepath.replace("mp4","avi").replace("input","output"),fourcc, faps, (960,540)) # 读视频
+emotions = ('angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral')
+box_angle_sorts = ('lower left','left','upper left','lower ','central','upper ','lower right','right','upper right')
+frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+fp_emotion = open("emotion1.txt", "w")
+frame = 0
+list_face_rectange = []
+list_face_data = []
+list_body_data = []
+analyse_data = []
+now_analyse_data=[]
+X=[]
+Y=[]
+k = 0
+
+start1 = time.clock()
+while (True):
+    ret, img = cap.read()
+    if not ret:
+        break
+    #img = cv2.imread('e:/2 Python/3 ZhangMS/photo/ce.jpg')
+    size = img.shape
+    frame = frame + 1  # zhen
+    now_face_data = []
+    now_analyse_data = []
+    list3=[]
+    start = time.clock()
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    faces_array = face_cascade.detectMultiScale(gray, 1.3, 3, cv2.CASCADE_SCALE_IMAGE)
+    #参数还可以加最大尺寸，最小尺寸，1.3每次图像减少的比例，3次表示同一目标被检测到三次才算人脸
+    list_face_rectange.append(faces_array)#收集每帧识别的人脸
+
+
+    if frame % 20 == 0 and frame > 20:  # 舍弃20 从60开始截取40帧的人脸数据集
+        list_face_data = list_face_rectange[:40]
+        list_face_rectange = list_face_rectange[20:]
+        #print("list_face_rectange" + str(len(list_face_data)))
+        #print(frame)
+    for j, line in enumerate(list_body_data):#每帧初始化人脸life-1，hit=0
+        line[4] = line[4] - 1
+        line[5] = 0
+    list_body_data = self.body_del(list_body_data)
+    #list_body_data = NMS(list_body_data)
+    for (x, y, w, h) in faces_array:
+        xmin = x
+        ymin = y
+        xmax = x + w
+        ymax = y + h
+        i = 0#计算人脸重叠次数
+        f = 0#标记人脸是否在框内
+        central_x = xmax + w // 2
+        central_y = ymax + h // 2
+        box_face = [xmin, ymin, xmax, ymax, central_x, central_y]
+        now_face_data.append(box_face)
+#--------------------------------------框的问题
+        if frame > 20:
+            for j, box_body in enumerate(list_body_data):#人脸在框内，框life+1 f=1,不进行接下来的画新框
+                iou=self.contain(box_body,box_face)
+                #if iou>0.6 or contain(line,box_face)==1:
+                if (iou > 0.95 and iou <= 1):
+                    box_body[4]=box_body[4]+1
+                    box_body[5]=1
+                    f=1
+                    #cv2.rectangle(img, (box_body[0], box_body[1]), (box_body[2], box_body[3]),(255, 255, 0), 1)
+                    break
+            if f==0:#f==0表示人脸不在框内
+                list_face_rectanges = self.rectangle_to_list(list_face_data)#保存为array
+                for j, box_history_face in enumerate(list_face_rectanges):  # 挑选疑似人脸的新框
+                    #print(box_face)
+                    #print(box_history_face)
+                    iou = self.overlap(box_history_face, box_face)
+                    if iou > 0.6:
+                        i = i + 1
+                        if i > 10:
+                            list_body_rectange = [box_face[0] - w // 2, box_face[1] - h// 2, box_face[2] + w // 2,
+                                                  box_face[3] + h // 2, 10, 2,0]  # xmin,ymin,xmax,ymax,life,hit=2,noface表示此轮画的新框
+                           # cv2.rectangle(img, (list_body_rectange[0], list_body_rectange[1]),
+                                          #(list_body_rectange[2], list_body_rectange[3]), (255, 255, 255), 1)
+                            list_body_data.append(list_body_rectange)
+                            break
+
+        #fp_emotion.write("第" + str(frame) + "秒" + "第" + str(j) + "个人脸，坐标为    " + str(face_rectangle) + "\n")
+        #fp_emotion.write("第" + str(frame) + "秒" + "共计疑似人脸框" + str(j) + "\n")
+    for j, line in enumerate(list_body_data):#对本帧框内没出现人脸的框进行重新筛选，也就是hit=0
+        if line[5] ==0:
+            detected_face = img[int(line[1]):int(line[3]), int(line[0]):int(line[2])]
+            detected_face = np.lib.pad(detected_face, pad_width=((0, 0), (8, 9), (0, 0)), mode='constant',
+                                       constant_values=0)
+            result_box = faceno.detected_face(detected_face)
+            if len(result_box)!=0:#如果框内有人脸则画红框
+                line[4]=line[4]+1
+                line[5]=1
+                for box in result_box:
+                    xmin=int(line[0]+box[0])
+                    ymin=int(line[1]+box[1])
+                    w =int(box[2]-box[0])
+                    h =int(box[3]-box[1])
+                    xmax=int(xmin+w)
+                    ymax=int(ymin+h)
+                    central_x = xmax + w // 2
+                    central_y = ymax + h // 2
+                    two_box_face = [xmin,ymin,xmax,ymax,central_x, central_y]
+                    now_face_data.append(two_box_face)
+                    #cv2.rectangle(img, (xmin,ymin), (xmax,ymax), (0, 0, 255), 1)
+                    cv2.rectangle(img, (line[0], line[1]), (line[2], line[3]), (0, 0, 255), 1)#画红框
+                    #ImageDraw.Draw(detected_face).rectangle((box[0], box[1], box[2],box[3]), outline="red")
+    for j, line in enumerate(list_body_data):#画出本帧框内未出现人脸且life>0的框
+        if line[5]==0:
+            line[6]=line[6]+1#line[6]=noface
+            cv2.rectangle(img, (line[0], line[1]), (line[2], line[3]), (255, 255, 255), 1)
+        if line[6]>50:
+            cv2.putText(img, str("!"), (int(line[0]), int(line[1])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+    for (xmin, ymin, xmax, ymax,central_x, central_y) in now_face_data:
+        box_face1 = [xmin, ymin, xmax, ymax, central_x, central_y]
+        if xmin < 0:
+            xmin = 0
+        if ymin < 0:
+            ymin = 0
+        cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (255, 0, 0), 1)  # draw face rectangle to main image
+        # ------------------------------视线
+
+        face_rectangle = dlib.rectangle(int(xmin), int(ymin), int(xmax), int(ymax))
+
+        image_points = predictor(img, face_rectangle)
+        ret, image_points = self.get_image_points_from_landmark_shape(image_points)
+        if ret != 0:
+            print('get_image_points failed')
+            continue
+
+        ret, rotation_vector, translation_vector, camera_matrix, dist_coeffs = self.get_pose_estimation(size,
+                                                                                                        image_points)
+        if ret != True:
+            print('get_pose_estimation failed')
+            continue
+        ret, pitch, yaw, roll = self.get_euler_angle(rotation_vector)
+        euler_angle_str = 'Y:{}, X:{}, Z:{}'.format(pitch, yaw, roll)  # format 增强字符串格式化功能
+        # print(euler_angle_str)
+        (nose_end_point2D, jacobian) = cv2.projectPoints(np.array([(0.0, 0.0, 1000.0)]), rotation_vector,
+                                                         translation_vector, camera_matrix, dist_coeffs)
+        #=--------------------------------头部姿态特征
+        box_angle_sort = self.angle_sort(box_face1,yaw,pitch)
+       #--------------------------------------画视线
+        for p in image_points:
+            cv2.circle(img, (int(p[0]), int(p[1])), 3, (0, 0, 255), -1)
+
+        p1 = (int(image_points[0][0]), int(image_points[0][1]))
+        p2 = (int(nose_end_point2D[0][0][0]), int(nose_end_point2D[0][0][1]))
+        cv2.line(img, p1, p2, (255, 0, 0), 2)
+        face_rectangle = dlib.rectangle(int(xmin), int(ymin), int(xmax), int(ymax))
+        #print(p1,p2)
+        #----------------------------------------------------表情
+        detected_face1 = img[int(ymin):int(ymax), int(xmin):int(xmax)]  # 图片出现空值如何补上其他颜色？
+        # print(xmin,ymin,xmax,ymax)
+        # detected_face = np.lib.pad(detected_face, pad_width=((0, 0), (8, 9), (0, 0)), mode='constant',constant_values=0)  # crop detected face
+        detected_face1 = cv2.cvtColor(detected_face1, cv2.COLOR_BGR2GRAY)  # transform to gray scale
+
+        detected_face1 = cv2.resize(detected_face1, (48, 48))  # resize to 48x48
+
+        img_pixels = image.img_to_array(detected_face1)
+
+        img_pixels = np.expand_dims(img_pixels, axis=0)
+
+        img_pixels /= 255  # pixels are in scale of [0, 255]. normalize all pixels in scale of [0, 1]
+        # print(img_pixels)
+
+        predictions = model.predict(img_pixels)  # store probabilities of 7 expressions
+
+        # print(predictions)
+
+        # find max indexed array 0: angry, 1:disgust, 2:fear, 3:happy, 4:sad, 5:surprise, 6:neutral
+        max_index = np.argmax(predictions[0])
+        emotion = emotions[max_index]
+        box_face1.append(emotion)
+        box_emotion_scores=self.emotion_scores(max_index)
+        box_face1.append(box_emotion_scores)
+        cv2.putText(img, emotion, (int(xmin), int(ymin)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        now_analyse_data.append(box_face1)
+    analyse_data.append(frame)
+
+    attention_student=0
+    for i, d in enumerate(now_analyse_data):
+        box_face2 =d[:9]
+        neighbour_box_list = self.Distance(box_face2, now_analyse_data)
+        box_face3 = self.attention_scores(box_face2, neighbour_box_list)
+        list3.append(box_face3)
+        if box_face3[9] == 1:
+            attention_student=attention_student + 1
+    #数据可视化
+    #--------------------------------------------------------
+    img_background = cv2.imread('e:/2 Python/3 ZhangMS/photo/background.jpg')
+    img_thumbnai = cv2.imread('e:/2 Python/3 ZhangMS/photo/thumbnail.jpg')
+    img_thumbnail = self.draws_thumbnail(img_thumbnai,now_analyse_data)
+    face_detect = len(now_analyse_data)
+    attention_rate = attention_student/face_detect *100
+    attention_rate_str = 'Attention ratio:{}'.format(round(attention_rate,2))
+    X.append(frame)
+    Y.append(attention_rate)
+    if frame>40:
+        X=X[1:]
+        Y=Y[1:]
+    img_attention= self.attention_figure(X, Y)
+    detect_people = len(now_analyse_data)
+    detect_people_str = 'detrect_people:{}'.format(detect_people)
+    img_parm = cv2.imread('e:/2 Python/3 ZhangMS/photo/parm.jpg')
+    cv2.putText(img_parm, str(detect_people_str), (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(img_parm, str(attention_rate_str+"%" ), (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    img1 = self.Splice(img_background, img, img_thumbnail, img_attention, img_parm)
+    analyse_data.append(list3)
+    end = time.clock()
+    pro = end - start
+    size=img1.shape
+    print(str(frame)+"帧"+str(pro))
+    # print(int(len(list_body_data)))
+    #cv2.imwrite( "ce"+str(frame) + ".jpg", img1)
+    out.write(img1)
+    cv2.imshow('opencv+cnn', img1 )
+    if cv2.waitKey(1) & 0xFF == ord('q'):  # press q to quit
+        break
+end1 = time.clock()
+print("总时长", end1 - start1)
+fp_emotion.close()
